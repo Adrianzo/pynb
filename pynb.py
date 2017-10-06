@@ -1,3 +1,4 @@
+#!/usr/bin/env python2
 import threading
 import time
 import getpass
@@ -17,6 +18,10 @@ from optparse import OptionParser
 import paramiko
 SSH_PORT = 22
 DEFAULT_PORT = 8888
+DEFAULT_CPU = 8
+DEFAULT_MEM = '32G'
+DEFAULT_PARTITION = 'ei-medium' 
+DEFAULT_ENV= '/usr/users/EI_ga012/%s/something1234' % os.environ['USER']
 g_verbose = True
 
 class ForwardServer(SocketServer.ThreadingTCPServer):
@@ -88,6 +93,10 @@ def parse_options():
     parser.add_option('', '--no-key', action='store_false', dest='look_for_keys', default=True, help="don't look for or use a private key file")
     parser.add_option('-P', '--password', action='store_true', dest='readpass', default=False, help='read password (for key or password auth) from stdin')
     parser.add_option('-r', '--remote', action='store', type='string', dest='remote', default=None, metavar='host:port', help='remote host and port to forward to')
+    parser.add_option('-w', '--partition', action='store', type='string', dest='partition', default=DEFAULT_PARTITION, help='host partition (default: %s)' % DEFAULT_PARTITION)
+    parser.add_option('-e', '--conda-env', action='store', type='string', dest='condaenv', default=DEFAULT_ENV, help='host conda environment (default: %s)' % DEFAULT_ENV)
+    parser.add_option('-m', '--memory', action='store', type='string', dest='mem', default=DEFAULT_MEM, help='desired memory to allocate (default: %s)' % DEFAULT_MEM)
+    parser.add_option('-c', '--cores', action='store', type='int', dest='cpu', default=DEFAULT_CPU, help='desired number of cores (default: %s)' % DEFAULT_CPU)
     options, args = parser.parse_args()
     if len(args) != 1:
         parser.error('Incorrect number of arguments.')
@@ -105,6 +114,7 @@ def main():
     if options.readpass:
         password = getpass.getpass('Enter SSH password: ')
     client = paramiko.SSHClient()
+    paramiko.util.log_to_file("jupymiko.log")
     client.load_system_host_keys()
     client.set_missing_host_key_policy(paramiko.WarningPolicy())
     try:
@@ -125,17 +135,18 @@ def main():
     pwd = passwd(pwd)
     client.exec_command("""
 echo "#!/bin/bash" > jupyternb.sbatch
-echo "#SBATCH -p tgac-short" >> jupyternb.sbatch
+echo "#SBATCH -p %s" >> jupyternb.sbatch
 echo "source /tgac/software/testing/bin/lmod-6.1;" >> jupyternb.sbatch
 echo "hostname;" >> jupyternb.sbatch
-echo "ssh -R %s:localhost:8888 v0558 -f -nNT;" >> jupyternb.sbatch
+echo "ssh -R %s:localhost:8888 %s -f -nNT;" >> jupyternb.sbatch
 echo "ml python_anaconda;" >> jupyternb.sbatch
+echo "source activate %s;" >> jupyternb.sbatch
 echo "echo \\\"c.NotebookApp.password = u'%s'\\\" > .jupyter/slurm_config.py" >> jupyternb.sbatch
 echo "jupyter notebook --no-browser --config=~/.jupyter/slurm_config.py" >> jupyternb.sbatch
-""" % (remote[1], pwd))
+""" % (options.partition, remote[1], server[1], options.condaenv, pwd))
 
     time.sleep(1)
-    stdin, stdout, stderr = client.exec_command("""sbatch -p tgac-short --mem 32G -c 8 jupyternb.sbatch""")
+    stdin, stdout, stderr = client.exec_command("""sbatch -p %s --mem %s -c %s jupyternb.sbatch""" % (options.partition, options.mem, options.cpu) )
     job_info = stdout.readlines()
     print job_info
     jobid = job_info[0].split(' ')[3]
